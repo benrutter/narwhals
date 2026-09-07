@@ -26,12 +26,15 @@ from tests.utils import (
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
+    from typing import TypeVar
 
     from typing_extensions import assert_type
 
     from narwhals._typing import EagerAllowed
-    from narwhals.stable.v2.typing import IntoDataFrameT
+    from narwhals.stable.v2.typing import FrameT as StableFrameT, IntoDataFrameT
     from narwhals.typing import IntoDType, _1DArray, _2DArray
+
+    FrameT = TypeVar("FrameT", nw_v2.Series[Any], nw_v2.DataFrame[Any])
 
 
 def test_toplevel() -> None:
@@ -215,9 +218,35 @@ def test_concat() -> None:
     result = nw_v2.concat([df, df], how="vertical")
     expected = {"a": [1, 2, 3, 1, 2, 3]}
     assert_equal_data(result, expected)
-    assert isinstance(result, nw_v2.DataFrame)
     if TYPE_CHECKING:
+        # Check the inferred return type before isinstance narrows it.
         assert_type(result, nw_v2.DataFrame[Any])
+    assert isinstance(result, nw_v2.DataFrame)
+
+    def identity(x: FrameT) -> FrameT:
+        return x
+
+    identity(nw_v2.concat([df], how="horizontal"))
+
+    def concat_generic(frame: StableFrameT) -> StableFrameT:
+        return nw_v2.concat([frame, frame])
+
+    def concat_sequence(frames: Sequence[StableFrameT]) -> StableFrameT:
+        return nw_v2.concat(frames)
+
+    assert_equal_data(concat_generic(df), expected)
+    assert_equal_data(concat_sequence([df, df]), expected)
+    lazy_result = concat_generic(df.lazy())
+    if TYPE_CHECKING:
+        assert_type(concat_generic(df), nw_v2.DataFrame[Any])
+        assert_type(lazy_result, nw_v2.LazyFrame[Any])
+        assert_type(nw_v2.concat([df.lazy()]), nw_v2.LazyFrame[Any])
+        # Mixing eager and lazy must stay a type error. `warn_unused_ignores` (via
+        # `strict`) makes this self-verifying: the ignore goes unused if it regresses.
+        nw_v2.concat([df, df.lazy()])  # type: ignore[type-var]
+    assert isinstance(lazy_result, nw_v2.LazyFrame)
+    assert_equal_data(lazy_result.collect(), expected)
+    assert_equal_data(concat_sequence([df.lazy(), df.lazy()]).collect(), expected)
 
 
 def test_to_dict_as_series() -> None:
